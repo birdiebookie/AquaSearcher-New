@@ -1,1 +1,567 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>AquaSearcher — Anomaly First</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js"></script>
 
+  <style>
+    :root {
+      --bg: #0f172a;
+      --panel: #1e293b;
+      --border: #334155;
+      --text: #e2e8f0;
+      --muted: #94a3b8;
+      --accent: #38bdf8;
+      --high: #ef4444;
+      --med: #f59e0b;
+      --low: #64748b;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+    header {
+      background: #020617;
+      padding: 12px 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid var(--border);
+    }
+    .logo { font-size: 1.4rem; font-weight: 800; letter-spacing: -0.5px; }
+    .logo span { color: var(--accent); }
+    .layout {
+      flex: 1;
+      display: grid;
+      grid-template-columns: 300px 1fr 340px;
+      overflow: hidden;
+    }
+    aside, .results {
+      background: var(--panel);
+      padding: 16px;
+      overflow-y: auto;
+      border-right: 1px solid var(--border);
+    }
+    .results { border-right: none; border-left: 1px solid var(--border); }
+    h3 { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin-bottom: 10px; }
+    .field { margin-bottom: 14px; }
+    label { display: block; font-size: 0.7rem; color: var(--muted); margin-bottom: 4px; }
+    input, select, button {
+      width: 100%;
+      padding: 9px 11px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: #0f172a;
+      color: var(--text);
+      font-size: 0.9rem;
+    }
+    button {
+      background: var(--accent);
+      color: #0f172a;
+      font-weight: 600;
+      border: none;
+      cursor: pointer;
+      margin-top: 6px;
+    }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    button.secondary { background: transparent; border: 1px solid var(--border); color: var(--text); }
+    .check { display: flex; align-items: center; gap: 8px; font-size: 0.85rem; margin: 8px 0; }
+    .check input { width: auto; }
+    #map { height: 100%; width: 100%; background: #020617; }
+    .card {
+      background: #0f172a;
+      border: 1px solid var(--border);
+      border-left: 4px solid var(--low);
+      border-radius: 10px;
+      padding: 12px;
+      margin-bottom: 10px;
+      cursor: pointer;
+      transition: 0.15s;
+    }
+    .card:hover { border-color: var(--accent); }
+    .card.high { border-left-color: var(--high); }
+    .card.med { border-left-color: var(--med); }
+    .card.selected { outline: 2px solid var(--accent); }
+    .rank { font-size: 0.7rem; background: #334155; padding: 2px 7px; border-radius: 99px; margin-right: 6px; }
+    .badge { font-size: 0.65rem; padding: 2px 6px; border-radius: 99px; font-weight: 600; }
+    .badge.anomaly { background: #7f1d1d; color: #fca5a5; }
+    .badge.access { background: #1e3a5f; color: #7dd3fc; }
+    .reason { font-size: 0.8rem; color: var(--muted); margin-top: 6px; line-height: 1.4; }
+    .score { font-size: 1.3rem; font-weight: 700; color: var(--accent); }
+    .detail {
+      background: #020617;
+      padding: 14px 20px;
+      border-top: 1px solid var(--border);
+      display: none;
+    }
+    .detail.show { display: block; }
+    .metrics { display: flex; gap: 18px; margin: 10px 0; flex-wrap: wrap; }
+    .metric { font-size: 0.8rem; }
+    .metric b { display: block; font-size: 1.1rem; color: var(--accent); }
+    .status { font-size: 0.8rem; color: var(--muted); margin-top: 8px; min-height: 20px; }
+    .progress { height: 4px; background: #334155; border-radius: 99px; margin-top: 8px; overflow: hidden; }
+    .progress-bar { height: 100%; background: var(--accent); width: 0%; transition: width 0.3s; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="logo">AQUA<span>SEARCHER</span></div>
+    <div style="font-size:0.8rem;color:var(--muted)">Anomaly-first vehicle search • Free data only</div>
+  </header>
+
+  <div class="layout">
+    <!-- LEFT CONTROLS -->
+    <aside>
+      <h3>Search Area</h3>
+      <div class="field">
+        <label>Location (city, address, or lat,lng)</label>
+        <input id="loc" placeholder="e.g. Fairfield, OH or 39.345, -84.560" value="Fairfield, OH"/>
+      </div>
+      <div class="field">
+        <label>Search Radius</label>
+        <select id="radius">
+          <option value="0.5">0.5 mile</option>
+          <option value="1" selected>1 mile</option>
+          <option value="2">2 miles</option>
+          <option value="3">3 miles</option>
+          <option value="5">5 miles</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Historical Window</label>
+        <div style="display:flex;gap:8px">
+          <select id="fromYear"></select>
+          <select id="toYear"></select>
+        </div>
+      </div>
+
+      <h3 style="margin-top:20px">Focus</h3>
+      <label class="check"><input type="checkbox" id="focusAnomaly" checked> Prioritize temporal anomalies</label>
+      <label class="check"><input type="checkbox" id="focusAccess" checked> Require nearby access</label>
+      <label class="check"><input type="checkbox" id="runDetection" checked> Run vehicle object detection</label>
+
+      <button id="startBtn">▶ Start Search</button>
+      <button id="pauseBtn" class="secondary" disabled>Pause</button>
+
+      <div class="status" id="status">Ready. Enter a location and start.</div>
+      <div class="progress"><div class="progress-bar" id="bar"></div></div>
+    </aside>
+
+    <!-- MAP -->
+    <div id="map"></div>
+
+    <!-- RESULTS -->
+    <div class="results">
+      <h3>Priority Queue <span id="count" style="color:var(--muted)">(0)</span></h3>
+      <div id="cards">
+        <div style="color:var(--muted);font-size:0.85rem;padding:20px 0">No results yet.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- DETAIL PANEL -->
+  <div class="detail" id="detail">
+    <div style="display:flex;justify-content:space-between;align-items:start">
+      <div>
+        <h2 id="detailTitle" style="font-size:1.1rem">—</h2>
+        <div id="detailReason" class="reason"></div>
+      </div>
+      <button class="secondary" style="width:auto;padding:6px 12px" onclick="document.getElementById('detail').classList.remove('show')">Close</button>
+    </div>
+    <div class="metrics" id="metrics"></div>
+    <div style="margin-top:10px;display:flex;gap:8px">
+      <button id="scanHistBtn" class="secondary" style="width:auto">Scan Historical Imagery</button>
+      <button id="scanObjBtn" class="secondary" style="width:auto">Run Object Detection</button>
+    </div>
+  </div>
+
+  <script>
+    // ===================== CONFIG =====================
+    const OVERPASS = "https://overpass-api.de/api/interpreter";
+
+    // ===================== STATE =====================
+    let map, pin, circle, waterLayer, accessLayer, resultLayer;
+    let findings = [];
+    let selected = null;
+    let cocoModel = null;
+    let paused = false;
+
+    // ===================== INIT =====================
+    function initYears() {
+      const from = document.getElementById("fromYear");
+      const to = document.getElementById("toYear");
+      for (let y = 1995; y <= 2025; y++) {
+        from.innerHTML += `<option value="${y}">${y}</option>`;
+        to.innerHTML += `<option value="${y}">${y}</option>`;
+      }
+      from.value = "2005";
+      to.value = "2023";
+    }
+
+    function initMap() {
+      map = L.map("map").setView([39.345, -84.56], 13);
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        attribution: "© OpenStreetMap",
+        maxZoom: 19
+      }).addTo(map);
+
+      // Topography option
+      L.tileLayer("https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png", {
+        attribution: "© OpenTopoMap",
+        maxZoom: 17,
+        opacity: 0.0
+      }).addTo(map);
+
+      waterLayer = L.layerGroup().addTo(map);
+      accessLayer = L.layerGroup().addTo(map);
+      resultLayer = L.layerGroup().addTo(map);
+
+      map.on("click", e => {
+        setPin(e.latlng.lat, e.latlng.lng);
+      });
+    }
+
+    function setPin(lat, lng) {
+      if (pin) map.removeLayer(pin);
+      pin = L.marker([lat, lng], { draggable: true }).addTo(map);
+      pin.on("dragend", () => updateCircle());
+      updateCircle();
+      document.getElementById("loc").value = `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+    }
+
+    function updateCircle() {
+      if (!pin) return;
+      const r = +document.getElementById("radius").value * 1609.34;
+      if (circle) map.removeLayer(circle);
+      circle = L.circle(pin.getLatLng(), { radius: r, color: "#38bdf8", weight: 2, fillOpacity: 0.05 }).addTo(map);
+    }
+
+    // ===================== HELPERS =====================
+    function setStatus(msg, pct = null) {
+      document.getElementById("status").textContent = msg;
+      if (pct !== null) document.getElementById("bar").style.width = pct + "%";
+    }
+
+    function distMeters(a, b) {
+      const R = 6371000;
+      const dLat = (b.lat - a.lat) * Math.PI / 180;
+      const dLng = (b.lng - a.lng) * Math.PI / 180;
+      const x = Math.sin(dLat/2)**2 + Math.cos(a.lat*Math.PI/180) * Math.cos(b.lat*Math.PI/180) * Math.sin(dLng/2)**2;
+      return R * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1-x));
+    }
+
+    // ===================== DATA FETCHING =====================
+    async function geocode(q) {
+      const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q)}&limit=1`;
+      const res = await fetch(url, { headers: { "Accept": "application/json" } });
+      const data = await res.json();
+      if (!data.length) throw new Error("Location not found");
+      return { lat: +data[0].lat, lng: +data[0].lon };
+    }
+
+    async function getWater(lat, lng, radiusMiles) {
+      const r = Math.round(radiusMiles * 1609);
+      const query = `
+        [out:json][timeout:45];
+        (
+          way(around:${r},${lat},${lng})[natural=water];
+          way(around:${r},${lat},${lng})[waterway=riverbank];
+          relation(around:${r},${lat},${lng})[natural=water];
+          way(around:${r},${lat},${lng})[landuse=reservoir];
+        );
+        out geom tags;
+      `;
+      const res = await fetch(OVERPASS, { method: "POST", body: query });
+      const data = await res.json();
+      return (data.elements || []).map(el => {
+        let coords = [];
+        if (el.geometry) coords = el.geometry.map(g => [g.lat, g.lon]);
+        const center = coords.length ? {
+          lat: coords.reduce((s,c)=>s+c[0],0)/coords.length,
+          lng: coords.reduce((s,c)=>s+c[1],0)/coords.length
+        } : { lat, lng };
+        return {
+          id: el.id,
+          name: el.tags?.name || "Water body",
+          type: el.tags?.natural || el.tags?.waterway || "water",
+          center,
+          coords
+        };
+      });
+    }
+
+    async function getAccess(lat, lng, radiusMiles) {
+      const r = Math.round(radiusMiles * 1609);
+      const query = `
+        [out:json][timeout:40];
+        (
+          node(around:${r},${lat},${lng})[amenity=boat_ramp];
+          node(around:${r},${lat},${lng})[leisure=slipway];
+          node(around:${r},${lat},${lng})[man_made=pier];
+          node(around:${r},${lat},${lng})[man_made=dock];
+          way(around:${r},${lat},${lng})[amenity=boat_ramp];
+          way(around:${r},${lat},${lng})[leisure=slipway];
+        );
+        out center tags;
+      `;
+      const res = await fetch(OVERPASS, { method: "POST", body: query });
+      const data = await res.json();
+      return (data.elements || []).map(el => {
+        const pt = el.center ? { lat: el.center.lat, lng: el.center.lon } :
+                   el.lat ? { lat: el.lat, lng: el.lon } : null;
+        if (!pt) return null;
+        return {
+          id: el.id,
+          name: el.tags?.name || el.tags?.amenity || el.tags?.leisure || "Access point",
+          type: el.tags?.amenity || el.tags?.leisure || el.tags?.man_made || "access",
+          lat: pt.lat,
+          lng: pt.lng
+        };
+      }).filter(Boolean);
+    }
+
+    // ===================== SCORING (ANOMALY FIRST) =====================
+    function scoreCandidate(c) {
+      const anomalyWeight = 0.50;
+      const persistenceWeight = 0.20;
+      const accessWeight = 0.20;
+      const sizeWeight = 0.10;
+
+      const anomaly = c.anomalyScore || 0;
+      const persistence = c.persistence || 0;
+      const access = c.accessScore || 0;
+      const size = c.sizeScore || 0;
+
+      let score = anomaly * anomalyWeight +
+                  persistence * persistenceWeight +
+                  access * accessWeight +
+                  size * sizeWeight;
+
+      // Strong bonus when anomaly exists AT an access point
+      if (anomaly >= 40 && access >= 50) {
+        score += 15;
+        c.label = "NEW OBJECT AT ACCESS";
+      } else if (anomaly >= 50) {
+        c.label = "STRONG ANOMALY";
+      } else if (access >= 70) {
+        c.label = "ACCESS ONLY";
+      } else {
+        c.label = "LOW";
+      }
+
+      c.priority = Math.round(Math.min(100, score));
+      return c;
+    }
+
+    // ===================== MAIN SEARCH =====================
+    async function runSearch() {
+      try {
+        paused = false;
+        document.getElementById("startBtn").disabled = true;
+        document.getElementById("pauseBtn").disabled = false;
+        findings = [];
+        waterLayer.clearLayers();
+        accessLayer.clearLayers();
+        resultLayer.clearLayers();
+        document.getElementById("cards").innerHTML = "";
+
+        setStatus("Geocoding location…", 5);
+        let center;
+        const locVal = document.getElementById("loc").value.trim();
+        const coordMatch = locVal.match(/^([-+]?\d+\.?\d*)\s*,\s*([-+]?\d+\.?\d*)$/);
+        if (coordMatch) {
+          center = { lat: +coordMatch[1], lng: +coordMatch[2] };
+        } else {
+          center = await geocode(locVal);
+        }
+        setPin(center.lat, center.lng);
+        map.setView([center.lat, center.lng], 14);
+
+        const radius = +document.getElementById("radius").value;
+
+        setStatus("Finding water bodies…", 15);
+        const waters = await getWater(center.lat, center.lng, radius);
+        waters.forEach(w => {
+          if (w.coords && w.coords.length > 2) {
+            L.polygon(w.coords, { color: "#38bdf8", weight: 1, fillOpacity: 0.15 }).addTo(waterLayer);
+          } else {
+            L.circleMarker([w.center.lat, w.center.lng], { radius: 6, color: "#38bdf8" }).addTo(waterLayer);
+          }
+        });
+
+        setStatus("Finding access points…", 30);
+        const accessPoints = await getAccess(center.lat, center.lng, radius);
+        accessPoints.forEach(a => {
+          L.circleMarker([a.lat, a.lng], {
+            radius: 7,
+            color: "#22c55e",
+            fillColor: "#22c55e",
+            fillOpacity: 0.8
+          }).bindPopup(`${a.name} (${a.type})`).addTo(accessLayer);
+        });
+
+        setStatus(`Building candidates from ${accessPoints.length} access points…`, 45);
+
+        // Create candidates primarily from access points (anomaly-first philosophy)
+        findings = accessPoints.map((a, i) => {
+          const nearestWater = waters.reduce((best, w) => {
+            const d = distMeters(a, w.center);
+            return d < best.d ? { d, w } : best;
+          }, { d: 99999, w: null });
+
+          const accessScore = nearestWater.d < 120 ? 90 :
+                              nearestWater.d < 250 ? 70 :
+                              nearestWater.d < 500 ? 40 : 15;
+
+          return {
+            id: "acc-" + a.id,
+            name: a.name,
+            type: a.type,
+            lat: a.lat,
+            lng: a.lng,
+            accessScore,
+            accessDist: Math.round(nearestWater.d),
+            anomalyScore: 0,
+            persistence: 0,
+            sizeScore: 0,
+            priority: 0,
+            label: "ACCESS ONLY",
+            reason: `Access point (${a.type}) • ${Math.round(nearestWater.d)} m from water`
+          };
+        });
+
+        // Also add a few water centroids as secondary candidates
+        waters.slice(0, 8).forEach((w, i) => {
+          findings.push({
+            id: "wat-" + w.id,
+            name: w.name,
+            type: "water",
+            lat: w.center.lat,
+            lng: w.center.lng,
+            accessScore: 20,
+            accessDist: null,
+            anomalyScore: 0,
+            persistence: 0,
+            sizeScore: 0,
+            priority: 0,
+            label: "WATER",
+            reason: "Water body centroid (no strong access yet)"
+          });
+        });
+
+        // Initial scoring
+        findings.forEach(scoreCandidate);
+        findings.sort((a, b) => b.priority - a.priority);
+
+        renderResults();
+        setStatus(`Found ${findings.length} candidates. Ready for historical / object scans.`, 70);
+        setStatus("Search complete. Select a candidate and run historical or object scan.", 100);
+      } catch (err) {
+        console.error(err);
+        setStatus("Error: " + err.message, 0);
+      } finally {
+        document.getElementById("startBtn").disabled = false;
+        document.getElementById("pauseBtn").disabled = true;
+      }
+    }
+
+    function renderResults() {
+      const container = document.getElementById("cards");
+      document.getElementById("count").textContent = `(${findings.length})`;
+      if (!findings.length) {
+        container.innerHTML = `<div style="color:var(--muted);font-size:0.85rem">No results.</div>`;
+        return;
+      }
+      container.innerHTML = findings.map((f, i) => `
+        <div class="card ${f.priority >= 70 ? 'high' : f.priority >= 45 ? 'med' : ''}" data-id="${f.id}">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <div>
+              <span class="rank">#${i+1}</span>
+              <strong>${f.name}</strong>
+            </div>
+            <div class="score">${f.priority}</div>
+          </div>
+          <div style="margin:6px 0">
+            <span class="badge ${f.label.includes('OBJECT') || f.label.includes('ANOMALY') ? 'anomaly' : 'access'}">${f.label}</span>
+          </div>
+          <div class="reason">${f.reason}</div>
+        </div>
+      `).join("");
+
+      container.querySelectorAll(".card").forEach(card => {
+        card.onclick = () => selectFinding(card.dataset.id);
+      });
+
+      // Draw top results on map
+      resultLayer.clearLayers();
+      findings.slice(0, 12).forEach((f, i) => {
+        const color = f.priority >= 70 ? "#ef4444" : f.priority >= 45 ? "#f59e0b" : "#64748b";
+        L.circleMarker([f.lat, f.lng], {
+          radius: 8,
+          color,
+          fillColor: color,
+          fillOpacity: 0.85,
+          weight: 2
+        }).bindPopup(`#${i+1} ${f.name}<br>Priority ${f.priority}`).addTo(resultLayer);
+      });
+    }
+
+    function selectFinding(id) {
+      selected = findings.find(f => f.id === id);
+      if (!selected) return;
+      document.querySelectorAll(".card").forEach(c => c.classList.remove("selected"));
+      document.querySelector(`.card[data-id="${id}"]`)?.classList.add("selected");
+
+      const panel = document.getElementById("detail");
+      panel.classList.add("show");
+      document.getElementById("detailTitle").textContent = selected.name;
+      document.getElementById("detailReason").textContent = selected.reason;
+      document.getElementById("metrics").innerHTML = `
+        <div class="metric"><b>${selected.priority}</b>Priority</div>
+        <div class="metric"><b>${selected.anomalyScore || 0}</b>Anomaly</div>
+        <div class="metric"><b>${selected.accessScore || 0}</b>Access</div>
+        <div class="metric"><b>${selected.accessDist != null ? selected.accessDist + " m" : "—"}</b>To water</div>
+      `;
+      map.setView([selected.lat, selected.lng], 16);
+    }
+
+    // ===================== PLACEHOLDER SCANS =====================
+    document.getElementById("scanHistBtn")?.addEventListener("click", () => {
+      if (!selected) return;
+      setStatus("Historical scan would compare Wayback tiles here (to be fully wired)…");
+      alert("Historical imagery comparison will be fully connected in the next pass.\nFor now the architecture is ready.");
+    });
+
+    document.getElementById("scanObjBtn")?.addEventListener("click", async () => {
+      if (!selected) return;
+      setStatus("Loading object detection model…");
+      try {
+        if (!cocoModel) cocoModel = await cocoSsd.load();
+        setStatus("Model loaded. Full tile-based detection coming next.");
+        alert("Object detection model ready.\nNext version will run it on historical tiles around the selected point.");
+      } catch (e) {
+        setStatus("Could not load detection model: " + e.message);
+      }
+    });
+
+    // ===================== EVENT LISTENERS =====================
+    document.getElementById("startBtn").onclick = runSearch;
+    document.getElementById("radius").onchange = updateCircle;
+
+    // ===================== BOOT =====================
+    initYears();
+    initMap();
+    setPin(39.345, -84.56);
+  </script>
+</body>
+</html>
