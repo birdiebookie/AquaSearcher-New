@@ -6,143 +6,58 @@
   <title>AquaSearcher — Anomaly First</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js"></script>
 
   <style>
     :root {
-      --bg: #0f172a;
-      --panel: #1e293b;
-      --border: #334155;
-      --text: #e2e8f0;
-      --muted: #94a3b8;
-      --accent: #38bdf8;
-      --high: #ef4444;
-      --med: #f59e0b;
-      --low: #64748b;
+      --bg: #0f172a; --panel: #1e293b; --border: #334155;
+      --text: #e2e8f0; --muted: #94a3b8; --accent: #38bdf8;
+      --high: #ef4444; --med: #f59e0b; --low: #64748b;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
-      font-family: system-ui, -apple-system, sans-serif;
-      background: var(--bg);
-      color: var(--text);
-      height: 100vh;
-      display: flex;
-      flex-direction: column;
-    }
-    header {
-      background: #020617;
-      padding: 12px 20px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      border-bottom: 1px solid var(--border);
-    }
-    .logo { font-size: 1.4rem; font-weight: 800; letter-spacing: -0.5px; }
-    .logo span { color: var(--accent); }
-    .layout {
-      flex: 1;
-      display: grid;
-      grid-template-columns: 300px 1fr 340px;
-      overflow: hidden;
-    }
-    aside, .results {
-      background: var(--panel);
-      padding: 16px;
-      overflow-y: auto;
-      border-right: 1px solid var(--border);
-    }
+    body { font-family: system-ui, sans-serif; background: var(--bg); color: var(--text); height: 100vh; display: flex; flex-direction: column; }
+    header { background: #020617; padding: 12px 20px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); }
+    .logo { font-size: 1.4rem; font-weight: 800; } .logo span { color: var(--accent); }
+    .layout { flex: 1; display: grid; grid-template-columns: 300px 1fr 340px; overflow: hidden; }
+    aside, .results { background: var(--panel); padding: 16px; overflow-y: auto; border-right: 1px solid var(--border); }
     .results { border-right: none; border-left: 1px solid var(--border); }
-    h3 { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin-bottom: 10px; }
+    h3 { font-size: 0.75rem; text-transform: uppercase; color: var(--muted); margin-bottom: 10px; }
     .field { margin-bottom: 14px; }
     label { display: block; font-size: 0.7rem; color: var(--muted); margin-bottom: 4px; }
-    input, select, button {
-      width: 100%;
-      padding: 9px 11px;
-      border-radius: 8px;
-      border: 1px solid var(--border);
-      background: #0f172a;
-      color: var(--text);
-      font-size: 0.9rem;
-    }
-    button {
-      background: var(--accent);
-      color: #0f172a;
-      font-weight: 600;
-      border: none;
-      cursor: pointer;
-      margin-top: 6px;
-    }
+    input, select, button { width: 100%; padding: 9px 11px; border-radius: 8px; border: 1px solid var(--border); background: #0f172a; color: var(--text); font-size: 0.9rem; }
+    button { background: var(--accent); color: #0f172a; font-weight: 600; border: none; cursor: pointer; margin-top: 6px; }
     button:disabled { opacity: 0.5; cursor: not-allowed; }
     button.secondary { background: transparent; border: 1px solid var(--border); color: var(--text); }
     .check { display: flex; align-items: center; gap: 8px; font-size: 0.85rem; margin: 8px 0; }
     .check input { width: auto; }
-    #map { height: 100%; width: 100%; background: #020617; }
-    .card {
-      background: #0f172a;
-      border: 1px solid var(--border);
-      border-left: 4px solid var(--low);
-      border-radius: 10px;
-      padding: 12px;
-      margin-bottom: 10px;
-      cursor: pointer;
-      transition: 0.15s;
-    }
+    #map { height: 100%; width: 100%; }
+    .card { background: #0f172a; border: 1px solid var(--border); border-left: 4px solid var(--low); border-radius: 10px; padding: 12px; margin-bottom: 10px; cursor: pointer; }
     .card:hover { border-color: var(--accent); }
     .card.high { border-left-color: var(--high); }
     .card.med { border-left-color: var(--med); }
     .card.selected { outline: 2px solid var(--accent); }
     .rank { font-size: 0.7rem; background: #334155; padding: 2px 7px; border-radius: 99px; margin-right: 6px; }
     .badge { font-size: 0.65rem; padding: 2px 6px; border-radius: 99px; font-weight: 600; }
-    .badge.anomaly { background: #7f1d1d; color: #fca5a5; }
     .badge.access { background: #1e3a5f; color: #7dd3fc; }
-    .reason { font-size: 0.8rem; color: var(--muted); margin-top: 6px; line-height: 1.4; }
+    .reason { font-size: 0.8rem; color: var(--muted); margin-top: 6px; }
     .score { font-size: 1.3rem; font-weight: 700; color: var(--accent); }
-    .detail {
-      background: #020617;
-      padding: 14px 20px;
-      border-top: 1px solid var(--border);
-      display: none;
-    }
-    .detail.show { display: block; }
-    .metrics { display: flex; gap: 18px; margin: 10px 0; flex-wrap: wrap; }
-    .metric { font-size: 0.8rem; }
-    .metric b { display: block; font-size: 1.1rem; color: var(--accent); }
     .status { font-size: 0.8rem; color: var(--muted); margin-top: 8px; min-height: 20px; }
     .progress { height: 4px; background: #334155; border-radius: 99px; margin-top: 8px; overflow: hidden; }
     .progress-bar { height: 100%; background: var(--accent); width: 0%; transition: width 0.3s; }
-    .pin-hint {
-      position: absolute;
-      top: 12px;
-      left: 50%;
-      transform: translateX(-50%);
-      background: #0f172aee;
-      color: #e2e8f0;
-      padding: 6px 14px;
-      border-radius: 20px;
-      font-size: 0.8rem;
-      z-index: 1000;
-      pointer-events: none;
-      border: 1px solid var(--border);
-    }
+    .pin-hint { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); background: #0f172aee; color: #e2e8f0; padding: 6px 14px; border-radius: 20px; font-size: 0.8rem; z-index: 1000; border: 1px solid var(--border); }
   </style>
 </head>
 <body>
   <header>
     <div class="logo">AQUA<span>SEARCHER</span></div>
-    <div style="font-size:0.8rem;color:var(--muted)">Anomaly-first vehicle search • Free data only</div>
+    <div style="font-size:0.8rem;color:var(--muted)">Anomaly-first • Free data</div>
   </header>
 
   <div class="layout">
-    <!-- LEFT CONTROLS -->
     <aside>
       <h3>Search Area</h3>
       <div class="field">
-        <label>Location (city, address, or lat,lng)</label>
-        <input id="loc" placeholder="City, address, or 39.345, -84.560" value="Fairfield, OH"/>
-        <div style="font-size:0.7rem;color:var(--muted);margin-top:4px">
-          Or just click / drag the blue pin on the map
-        </div>
+        <label>Location (or click / drag pin)</label>
+        <input id="loc" placeholder="City or 39.345, -84.560" value="Fairfield, OH"/>
       </div>
       <div class="field">
         <label>Search Radius</label>
@@ -162,65 +77,36 @@
         </div>
       </div>
 
-      <h3 style="margin-top:20px">Focus</h3>
+      <h3 style="margin-top:18px">Focus</h3>
       <label class="check"><input type="checkbox" id="focusAnomaly" checked> Prioritize temporal anomalies</label>
       <label class="check"><input type="checkbox" id="focusAccess" checked> Require nearby access</label>
-      <label class="check"><input type="checkbox" id="runDetection" checked> Run vehicle object detection</label>
 
       <button id="startBtn">▶ Start Search</button>
-      <button id="pauseBtn" class="secondary" disabled>Pause</button>
+      <button id="retryBtn" class="secondary" style="display:none">↻ Retry</button>
 
-      <div class="status" id="status">Ready. Click the map or drag the pin, then press Start Search.</div>
+      <div class="status" id="status">Ready. Click or drag the pin, then press Start Search.</div>
       <div class="progress"><div class="progress-bar" id="bar"></div></div>
     </aside>
 
-    <!-- MAP -->
     <div style="position:relative">
-      <div class="pin-hint" id="pinHint">Click map or drag the pin to move search center</div>
+      <div class="pin-hint" id="pinHint">Click map or drag the blue pin</div>
       <div id="map"></div>
     </div>
 
-    <!-- RESULTS -->
     <div class="results">
       <h3>Priority Queue <span id="count" style="color:var(--muted)">(0)</span></h3>
-      <div id="cards">
-        <div style="color:var(--muted);font-size:0.85rem;padding:20px 0">No results yet.</div>
-      </div>
-    </div>
-  </div>
-
-  <!-- DETAIL PANEL -->
-  <div class="detail" id="detail">
-    <div style="display:flex;justify-content:space-between;align-items:start">
-      <div>
-        <h2 id="detailTitle" style="font-size:1.1rem">—</h2>
-        <div id="detailReason" class="reason"></div>
-      </div>
-      <button class="secondary" style="width:auto;padding:6px 12px" onclick="document.getElementById('detail').classList.remove('show')">Close</button>
-    </div>
-    <div class="metrics" id="metrics"></div>
-    <div style="margin-top:10px;display:flex;gap:8px">
-      <button id="scanHistBtn" class="secondary" style="width:auto">Scan Historical Imagery</button>
-      <button id="scanObjBtn" class="secondary" style="width:auto">Run Object Detection</button>
+      <div id="cards"><div style="color:var(--muted);font-size:0.85rem;padding:20px 0">No results yet.</div></div>
     </div>
   </div>
 
   <script>
-    // ===================== CONFIG =====================
-    const OVERPASS_URLS = [
-      "https://overpass-api.de/api/interpreter",
-      "https://overpass.kumi.systems/api/interpreter",
-      "https://overpass.openstreetmap.ru/api/interpreter"
-    ];
+    const OVERPASS = "https://overpass-api.de/api/interpreter";
+    // Temporary public CORS proxy to bypass browser blocks
+    const PROXY = "https://corsproxy.io/?";
 
-    // ===================== STATE =====================
     let map, pin, circle, waterLayer, accessLayer, resultLayer;
     let findings = [];
-    let selected = null;
-    let cocoModel = null;
-    let paused = false;
 
-    // ===================== INIT =====================
     function initYears() {
       const from = document.getElementById("fromYear");
       const to = document.getElementById("toYear");
@@ -234,17 +120,14 @@
 
     function initMap() {
       map = L.map("map").setView([39.345, -84.56], 13);
-
       L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-        attribution: "© OpenStreetMap",
-        maxZoom: 19
+        attribution: "© OpenStreetMap", maxZoom: 19
       }).addTo(map);
 
       waterLayer = L.layerGroup().addTo(map);
       accessLayer = L.layerGroup().addTo(map);
       resultLayer = L.layerGroup().addTo(map);
 
-      // Click anywhere on the map to place/move the pin
       map.on("click", e => {
         setPin(e.latlng.lat, e.latlng.lng);
         document.getElementById("pinHint").style.display = "none";
@@ -253,44 +136,25 @@
 
     function setPin(lat, lng) {
       if (pin) map.removeLayer(pin);
-
-      pin = L.marker([lat, lng], {
-        draggable: true,
-        autoPan: true,
-        title: "Drag me to move the search center"
-      }).addTo(map);
-
-      // Make dragging obvious
-      pin.bindPopup("<b>Search Center</b><br>Drag this pin or click the map to move it").openPopup();
-
+      pin = L.marker([lat, lng], { draggable: true, autoPan: true }).addTo(map);
+      pin.bindPopup("<b>Search Center</b><br>Drag me or click the map").openPopup();
       pin.on("dragend", () => {
         const p = pin.getLatLng();
-        document.getElementById("loc").value = `${p.lat.toFixed(6)}, ${p.lng.toFixed(6)}`;
+        document.getElementById("loc").value = p.lat.toFixed(6) + ", " + p.lng.toFixed(6);
         updateCircle();
-        setStatus("Pin moved. Press Start Search to scan the new area.");
+        setStatus("Pin moved. Press Start Search.");
       });
-
-      pin.on("dragstart", () => {
-        document.getElementById("pinHint").style.display = "none";
-      });
-
       updateCircle();
-      document.getElementById("loc").value = `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+      document.getElementById("loc").value = lat.toFixed(6) + ", " + lng.toFixed(6);
     }
 
     function updateCircle() {
       if (!pin) return;
       const r = +document.getElementById("radius").value * 1609.34;
       if (circle) map.removeLayer(circle);
-      circle = L.circle(pin.getLatLng(), {
-        radius: r,
-        color: "#38bdf8",
-        weight: 2,
-        fillOpacity: 0.05
-      }).addTo(map);
+      circle = L.circle(pin.getLatLng(), { radius: r, color: "#38bdf8", weight: 2, fillOpacity: 0.05 }).addTo(map);
     }
 
-    // ===================== HELPERS =====================
     function setStatus(msg, pct = null) {
       document.getElementById("status").textContent = msg;
       if (pct !== null) document.getElementById("bar").style.width = pct + "%";
@@ -304,41 +168,38 @@
       return R * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1-x));
     }
 
-    // Try multiple Overpass servers
     async function fetchOverpass(query) {
-      let lastError = null;
-      for (const url of OVERPASS_URLS) {
+      // Try direct first, then via proxy
+      const urls = [
+        OVERPASS,
+        PROXY + encodeURIComponent(OVERPASS)
+      ];
+      let lastErr;
+      for (const url of urls) {
         try {
           const controller = new AbortController();
-          const timeout = setTimeout(() => controller.abort(), 25000);
-
+          const t = setTimeout(() => controller.abort(), 20000);
           const res = await fetch(url, {
             method: "POST",
-            body: query,
+            body: "data=" + encodeURIComponent(query),
             signal: controller.signal,
             headers: { "Content-Type": "application/x-www-form-urlencoded" }
           });
-          clearTimeout(timeout);
-
-          if (!res.ok) throw new Error(`HTTP ${res.status}`);
-          const data = await res.json();
-          return data;
-        } catch (err) {
-          console.warn("Overpass failed on", url, err.message);
-          lastError = err;
+          clearTimeout(t);
+          if (!res.ok) throw new Error("HTTP " + res.status);
+          return await res.json();
+        } catch (e) {
+          lastErr = e;
+          console.warn("Overpass attempt failed:", e.message);
         }
       }
-      throw lastError || new Error("All Overpass servers failed");
+      throw lastErr || new Error("All Overpass attempts failed");
     }
 
-    // ===================== DATA FETCHING =====================
     async function geocode(q) {
-      const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q)}&limit=1`;
+      const url = "https://nominatim.openstreetmap.org/search?format=json&q=" + encodeURIComponent(q) + "&limit=1";
       const res = await fetch(url, {
-        headers: {
-          "Accept": "application/json",
-          "User-Agent": "AquaSearcher/1.0 (educational vehicle search tool)"
-        }
+        headers: { "User-Agent": "AquaSearcher/2.0" }
       });
       if (!res.ok) throw new Error("Geocoding failed");
       const data = await res.json();
@@ -346,311 +207,170 @@
       return { lat: +data[0].lat, lng: +data[0].lon };
     }
 
-    async function getWater(lat, lng, radiusMiles) {
-      const r = Math.round(radiusMiles * 1609);
-      const query = `
-        [out:json][timeout:40];
-        (
-          way(around:${r},${lat},${lng})[natural=water];
-          way(around:${r},${lat},${lng})[waterway=riverbank];
-          relation(around:${r},${lat},${lng})[natural=water];
-          way(around:${r},${lat},${lng})[landuse=reservoir];
-        );
-        out geom tags;
-      `;
+    async function getWater(lat, lng, miles) {
+      const r = Math.round(miles * 1609);
+      const query = `[out:json][timeout:25];(way(around:${r},${lat},${lng})[natural=water];way(around:${r},${lat},${lng})[landuse=reservoir];relation(around:${r},${lat},${lng})[natural=water];);out geom tags;`;
       const data = await fetchOverpass(query);
       return (data.elements || []).map(el => {
-        let coords = [];
-        if (el.geometry) coords = el.geometry.map(g => [g.lat, g.lon]);
+        const coords = el.geometry ? el.geometry.map(g => [g.lat, g.lon]) : [];
         const center = coords.length ? {
-          lat: coords.reduce((s,c)=>s+c[0],0)/coords.length,
-          lng: coords.reduce((s,c)=>s+c[1],0)/coords.length
+          lat: coords.reduce((s,c) => s + c[0], 0) / coords.length,
+          lng: coords.reduce((s,c) => s + c[1], 0) / coords.length
         } : { lat, lng };
-        return {
-          id: el.id,
-          name: el.tags?.name || "Water body",
-          type: el.tags?.natural || el.tags?.waterway || "water",
-          center,
-          coords
-        };
+        return { id: el.id, name: (el.tags && el.tags.name) || "Water", center, coords };
       });
     }
 
-    async function getAccess(lat, lng, radiusMiles) {
-      const r = Math.round(radiusMiles * 1609);
-      const query = `
-        [out:json][timeout:35];
-        (
-          node(around:${r},${lat},${lng})[amenity=boat_ramp];
-          node(around:${r},${lat},${lng})[leisure=slipway];
-          node(around:${r},${lat},${lng})[man_made=pier];
-          node(around:${r},${lat},${lng})[man_made=dock];
-          way(around:${r},${lat},${lng})[amenity=boat_ramp];
-          way(around:${r},${lat},${lng})[leisure=slipway];
-        );
-        out center tags;
-      `;
+    async function getAccess(lat, lng, miles) {
+      const r = Math.round(miles * 1609);
+      const query = `[out:json][timeout:25];(node(around:${r},${lat},${lng})[amenity=boat_ramp];node(around:${r},${lat},${lng})[leisure=slipway];node(around:${r},${lat},${lng})[man_made=pier];node(around:${r},${lat},${lng})[man_made=dock];way(around:${r},${lat},${lng})[amenity=boat_ramp];);out center tags;`;
       const data = await fetchOverpass(query);
       return (data.elements || []).map(el => {
-        const pt = el.center ? { lat: el.center.lat, lng: el.center.lon } :
-                   el.lat ? { lat: el.lat, lng: el.lon } : null;
+        const pt = el.center || (el.lat ? { lat: el.lat, lon: el.lon } : null);
         if (!pt) return null;
         return {
           id: el.id,
-          name: el.tags?.name || el.tags?.amenity || el.tags?.leisure || "Access point",
-          type: el.tags?.amenity || el.tags?.leisure || el.tags?.man_made || "access",
-          lat: pt.lat,
-          lng: pt.lng
+          name: (el.tags && (el.tags.name || el.tags.amenity || el.tags.leisure)) || "Access",
+          type: (el.tags && (el.tags.amenity || el.tags.leisure || el.tags.man_made)) || "access",
+          lat: pt.lat, lng: pt.lon || pt.lng
         };
       }).filter(Boolean);
     }
 
-    // ===================== SCORING (ANOMALY FIRST) =====================
     function scoreCandidate(c) {
-      const anomalyWeight = 0.50;
-      const persistenceWeight = 0.20;
-      const accessWeight = 0.20;
-      const sizeWeight = 0.10;
-
-      const anomaly = c.anomalyScore || 0;
-      const persistence = c.persistence || 0;
-      const access = c.accessScore || 0;
-      const size = c.sizeScore || 0;
-
-      let score = anomaly * anomalyWeight +
-                  persistence * persistenceWeight +
-                  access * accessWeight +
-                  size * sizeWeight;
-
-      if (anomaly >= 40 && access >= 50) {
-        score += 15;
-        c.label = "NEW OBJECT AT ACCESS";
-      } else if (anomaly >= 50) {
-        c.label = "STRONG ANOMALY";
-      } else if (access >= 70) {
-        c.label = "ACCESS ONLY";
-      } else {
-        c.label = "LOW";
-      }
-
+      let score = (c.accessScore || 0) * 0.7 + (c.anomalyScore || 0) * 0.3;
+      if (c.accessScore >= 70) c.label = "ACCESS ONLY";
+      else c.label = "LOW";
       c.priority = Math.round(Math.min(100, score));
       return c;
     }
 
-    // ===================== MAIN SEARCH =====================
     async function runSearch() {
+      document.getElementById("startBtn").disabled = true;
+      document.getElementById("retryBtn").style.display = "none";
+      findings = [];
+      waterLayer.clearLayers();
+      accessLayer.clearLayers();
+      resultLayer.clearLayers();
+      document.getElementById("cards").innerHTML = "";
+
       try {
-        paused = false;
-        document.getElementById("startBtn").disabled = true;
-        document.getElementById("pauseBtn").disabled = false;
-        findings = [];
-        waterLayer.clearLayers();
-        accessLayer.clearLayers();
-        resultLayer.clearLayers();
-        document.getElementById("cards").innerHTML = "";
-
-        setStatus("Getting location…", 5);
-
+        setStatus("Getting location…", 10);
         let center;
         if (pin) {
-          // Prefer the current pin position
           const p = pin.getLatLng();
           center = { lat: p.lat, lng: p.lng };
         } else {
-          const locVal = document.getElementById("loc").value.trim();
-          const coordMatch = locVal.match(/^([-+]?\d+\.?\d*)\s*,\s*([-+]?\d+\.?\d*)$/);
-          if (coordMatch) {
-            center = { lat: +coordMatch[1], lng: +coordMatch[2] };
-          } else {
-            center = await geocode(locVal);
-          }
+          const val = document.getElementById("loc").value.trim();
+          const m = val.match(/^([-+]?\d+\.?\d*)\s*,\s*([-+]?\d+\.?\d*)$/);
+          center = m ? { lat: +m[1], lng: +m[2] } : await geocode(val);
           setPin(center.lat, center.lng);
         }
-
         map.setView([center.lat, center.lng], 14);
         const radius = +document.getElementById("radius").value;
 
-        setStatus("Finding water bodies…", 20);
+        setStatus("Loading water…", 30);
         let waters = [];
-        try {
-          waters = await getWater(center.lat, center.lng, radius);
-        } catch (e) {
-          console.warn("Water fetch failed:", e);
-          setStatus("Water data temporarily unavailable – continuing with access points…", 30);
-        }
+        try { waters = await getWater(center.lat, center.lng, radius); }
+        catch (e) { console.warn("Water failed", e); setStatus("Water data limited – continuing…", 40); }
 
         waters.forEach(w => {
-          if (w.coords && w.coords.length > 2) {
+          if (w.coords && w.coords.length > 2)
             L.polygon(w.coords, { color: "#38bdf8", weight: 1, fillOpacity: 0.15 }).addTo(waterLayer);
-          } else {
+          else
             L.circleMarker([w.center.lat, w.center.lng], { radius: 6, color: "#38bdf8" }).addTo(waterLayer);
-          }
         });
 
-        setStatus("Finding access points (ramps, docks, slipways)…", 45);
+        setStatus("Loading access points…", 55);
         let accessPoints = [];
         try {
           accessPoints = await getAccess(center.lat, center.lng, radius);
         } catch (e) {
-          console.warn("Access fetch failed:", e);
-          setStatus("Access data failed. Try again in a minute or move the pin.", 0);
+          setStatus("Access data failed. Click Retry in a moment.", 0);
+          document.getElementById("retryBtn").style.display = "block";
           throw e;
         }
 
         accessPoints.forEach(a => {
-          L.circleMarker([a.lat, a.lng], {
-            radius: 7,
-            color: "#22c55e",
-            fillColor: "#22c55e",
-            fillOpacity: 0.8
-          }).bindPopup(`${a.name} (${a.type})`).addTo(accessLayer);
+          L.circleMarker([a.lat, a.lng], { radius: 7, color: "#22c55e", fillColor: "#22c55e", fillOpacity: 0.85 })
+            .bindPopup(a.name + " (" + a.type + ")").addTo(accessLayer);
         });
 
-        setStatus(`Building candidates from ${accessPoints.length} access points…`, 65);
+        setStatus("Building priority list…", 75);
 
         findings = accessPoints.map(a => {
-          const nearestWater = waters.reduce((best, w) => {
+          const nearest = waters.reduce((best, w) => {
             const d = distMeters(a, w.center);
             return d < best.d ? { d, w } : best;
           }, { d: 99999, w: null });
 
-          const accessScore = nearestWater.d < 120 ? 90 :
-                              nearestWater.d < 250 ? 70 :
-                              nearestWater.d < 500 ? 40 : 15;
-
+          const accessScore = nearest.d < 120 ? 90 : nearest.d < 250 ? 70 : nearest.d < 500 ? 40 : 15;
           return {
-            id: "acc-" + a.id,
+            id: "a" + a.id,
             name: a.name,
             type: a.type,
-            lat: a.lat,
-            lng: a.lng,
+            lat: a.lat, lng: a.lng,
             accessScore,
-            accessDist: Math.round(nearestWater.d),
+            accessDist: Math.round(nearest.d),
             anomalyScore: 0,
-            persistence: 0,
-            sizeScore: 0,
             priority: 0,
             label: "ACCESS ONLY",
-            reason: `Access point (${a.type}) • ${Math.round(nearestWater.d)} m from water`
+            reason: a.type + " • " + Math.round(nearest.d) + " m from water"
           };
-        });
-
-        // Add some water centroids as secondary candidates
-        waters.slice(0, 6).forEach(w => {
-          findings.push({
-            id: "wat-" + w.id,
-            name: w.name,
-            type: "water",
-            lat: w.center.lat,
-            lng: w.center.lng,
-            accessScore: 20,
-            accessDist: null,
-            anomalyScore: 0,
-            persistence: 0,
-            sizeScore: 0,
-            priority: 0,
-            label: "WATER",
-            reason: "Water body centroid"
-          });
         });
 
         findings.forEach(scoreCandidate);
         findings.sort((a, b) => b.priority - a.priority);
-
         renderResults();
-        setStatus(`Found ${findings.length} candidates. Select one to inspect.`, 100);
+        setStatus("Found " + findings.length + " candidates.", 100);
 
       } catch (err) {
         console.error(err);
-        setStatus("Error: " + (err.message || "Failed to fetch data. Try again in a moment."), 0);
+        setStatus("Error: " + (err.message || "Failed to fetch") + " — try Retry", 0);
+        document.getElementById("retryBtn").style.display = "block";
       } finally {
         document.getElementById("startBtn").disabled = false;
-        document.getElementById("pauseBtn").disabled = true;
       }
     }
 
     function renderResults() {
-      const container = document.getElementById("cards");
-      document.getElementById("count").textContent = `(${findings.length})`;
+      const box = document.getElementById("cards");
+      document.getElementById("count").textContent = "(" + findings.length + ")";
       if (!findings.length) {
-        container.innerHTML = `<div style="color:var(--muted);font-size:0.85rem">No results.</div>`;
+        box.innerHTML = "<div style='color:var(--muted);font-size:0.85rem'>No results.</div>";
         return;
       }
-      container.innerHTML = findings.map((f, i) => `
-        <div class="card ${f.priority >= 70 ? 'high' : f.priority >= 45 ? 'med' : ''}" data-id="${f.id}">
-          <div style="display:flex;justify-content:space-between;align-items:center">
-            <div>
-              <span class="rank">#${i+1}</span>
-              <strong>${f.name}</strong>
-            </div>
+      box.innerHTML = findings.map((f, i) => `
+        <div class="card ${f.priority >= 70 ? "high" : f.priority >= 45 ? "med" : ""}" data-id="${f.id}">
+          <div style="display:flex;justify-content:space-between">
+            <div><span class="rank">#${i+1}</span><strong>${f.name}</strong></div>
             <div class="score">${f.priority}</div>
           </div>
-          <div style="margin:6px 0">
-            <span class="badge ${f.label.includes('OBJECT') || f.label.includes('ANOMALY') ? 'anomaly' : 'access'}">${f.label}</span>
-          </div>
+          <div style="margin:6px 0"><span class="badge access">${f.label}</span></div>
           <div class="reason">${f.reason}</div>
         </div>
       `).join("");
 
-      container.querySelectorAll(".card").forEach(card => {
-        card.onclick = () => selectFinding(card.dataset.id);
+      box.querySelectorAll(".card").forEach(c => c.onclick = () => {
+        const f = findings.find(x => x.id === c.dataset.id);
+        if (!f) return;
+        map.setView([f.lat, f.lng], 16);
+        document.querySelectorAll(".card").forEach(x => x.classList.remove("selected"));
+        c.classList.add("selected");
       });
 
       resultLayer.clearLayers();
-      findings.slice(0, 15).forEach((f, i) => {
-        const color = f.priority >= 70 ? "#ef4444" : f.priority >= 45 ? "#f59e0b" : "#64748b";
-        L.circleMarker([f.lat, f.lng], {
-          radius: 8,
-          color,
-          fillColor: color,
-          fillOpacity: 0.85,
-          weight: 2
-        }).bindPopup(`#${i+1} ${f.name}<br>Priority ${f.priority}`).addTo(resultLayer);
+      findings.slice(0, 12).forEach((f, i) => {
+        const col = f.priority >= 70 ? "#ef4444" : f.priority >= 45 ? "#f59e0b" : "#64748b";
+        L.circleMarker([f.lat, f.lng], { radius: 8, color: col, fillColor: col, fillOpacity: 0.85 })
+          .bindPopup("#" + (i+1) + " " + f.name).addTo(resultLayer);
       });
     }
 
-    function selectFinding(id) {
-      selected = findings.find(f => f.id === id);
-      if (!selected) return;
-      document.querySelectorAll(".card").forEach(c => c.classList.remove("selected"));
-      document.querySelector(`.card[data-id="${id}"]`)?.classList.add("selected");
-
-      const panel = document.getElementById("detail");
-      panel.classList.add("show");
-      document.getElementById("detailTitle").textContent = selected.name;
-      document.getElementById("detailReason").textContent = selected.reason;
-      document.getElementById("metrics").innerHTML = `
-        <div class="metric"><b>${selected.priority}</b>Priority</div>
-        <div class="metric"><b>${selected.anomalyScore || 0}</b>Anomaly</div>
-        <div class="metric"><b>${selected.accessScore || 0}</b>Access</div>
-        <div class="metric"><b>${selected.accessDist != null ? selected.accessDist + " m" : "—"}</b>To water</div>
-      `;
-      map.setView([selected.lat, selected.lng], 16);
-    }
-
-    // Placeholder buttons
-    document.getElementById("scanHistBtn")?.addEventListener("click", () => {
-      if (!selected) return;
-      alert("Historical imagery comparison will be added in the next update.");
-    });
-
-    document.getElementById("scanObjBtn")?.addEventListener("click", async () => {
-      if (!selected) return;
-      setStatus("Loading object detection model…");
-      try {
-        if (!cocoModel) cocoModel = await cocoSsd.load();
-        setStatus("Model ready. Full detection coming next.");
-        alert("Object detection model loaded successfully.");
-      } catch (e) {
-        setStatus("Could not load model: " + e.message);
-      }
-    });
-
-    // ===================== EVENT LISTENERS =====================
     document.getElementById("startBtn").onclick = runSearch;
+    document.getElementById("retryBtn").onclick = runSearch;
     document.getElementById("radius").onchange = updateCircle;
 
-    // ===================== BOOT =====================
     initYears();
     initMap();
     setPin(39.345, -84.56);
