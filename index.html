@@ -111,6 +111,20 @@
     .status { font-size: 0.8rem; color: var(--muted); margin-top: 8px; min-height: 20px; }
     .progress { height: 4px; background: #334155; border-radius: 99px; margin-top: 8px; overflow: hidden; }
     .progress-bar { height: 100%; background: var(--accent); width: 0%; transition: width 0.3s; }
+    .pin-hint {
+      position: absolute;
+      top: 12px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: #0f172aee;
+      color: #e2e8f0;
+      padding: 6px 14px;
+      border-radius: 20px;
+      font-size: 0.8rem;
+      z-index: 1000;
+      pointer-events: none;
+      border: 1px solid var(--border);
+    }
   </style>
 </head>
 <body>
@@ -125,7 +139,10 @@
       <h3>Search Area</h3>
       <div class="field">
         <label>Location (city, address, or lat,lng)</label>
-        <input id="loc" placeholder="e.g. Fairfield, OH or 39.345, -84.560" value="Fairfield, OH"/>
+        <input id="loc" placeholder="City, address, or 39.345, -84.560" value="Fairfield, OH"/>
+        <div style="font-size:0.7rem;color:var(--muted);margin-top:4px">
+          Or just click / drag the blue pin on the map
+        </div>
       </div>
       <div class="field">
         <label>Search Radius</label>
@@ -153,12 +170,15 @@
       <button id="startBtn">▶ Start Search</button>
       <button id="pauseBtn" class="secondary" disabled>Pause</button>
 
-      <div class="status" id="status">Ready. Enter a location and start.</div>
+      <div class="status" id="status">Ready. Click the map or drag the pin, then press Start Search.</div>
       <div class="progress"><div class="progress-bar" id="bar"></div></div>
     </aside>
 
     <!-- MAP -->
-    <div id="map"></div>
+    <div style="position:relative">
+      <div class="pin-hint" id="pinHint">Click map or drag the pin to move search center</div>
+      <div id="map"></div>
+    </div>
 
     <!-- RESULTS -->
     <div class="results">
@@ -187,7 +207,11 @@
 
   <script>
     // ===================== CONFIG =====================
-    const OVERPASS = "https://overpass-api.de/api/interpreter";
+    const OVERPASS_URLS = [
+      "https://overpass-api.de/api/interpreter",
+      "https://overpass.kumi.systems/api/interpreter",
+      "https://overpass.openstreetmap.ru/api/interpreter"
+    ];
 
     // ===================== STATE =====================
     let map, pin, circle, waterLayer, accessLayer, resultLayer;
@@ -210,31 +234,46 @@
 
     function initMap() {
       map = L.map("map").setView([39.345, -84.56], 13);
+
       L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
         attribution: "© OpenStreetMap",
         maxZoom: 19
-      }).addTo(map);
-
-      // Topography option
-      L.tileLayer("https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png", {
-        attribution: "© OpenTopoMap",
-        maxZoom: 17,
-        opacity: 0.0
       }).addTo(map);
 
       waterLayer = L.layerGroup().addTo(map);
       accessLayer = L.layerGroup().addTo(map);
       resultLayer = L.layerGroup().addTo(map);
 
+      // Click anywhere on the map to place/move the pin
       map.on("click", e => {
         setPin(e.latlng.lat, e.latlng.lng);
+        document.getElementById("pinHint").style.display = "none";
       });
     }
 
     function setPin(lat, lng) {
       if (pin) map.removeLayer(pin);
-      pin = L.marker([lat, lng], { draggable: true }).addTo(map);
-      pin.on("dragend", () => updateCircle());
+
+      pin = L.marker([lat, lng], {
+        draggable: true,
+        autoPan: true,
+        title: "Drag me to move the search center"
+      }).addTo(map);
+
+      // Make dragging obvious
+      pin.bindPopup("<b>Search Center</b><br>Drag this pin or click the map to move it").openPopup();
+
+      pin.on("dragend", () => {
+        const p = pin.getLatLng();
+        document.getElementById("loc").value = `${p.lat.toFixed(6)}, ${p.lng.toFixed(6)}`;
+        updateCircle();
+        setStatus("Pin moved. Press Start Search to scan the new area.");
+      });
+
+      pin.on("dragstart", () => {
+        document.getElementById("pinHint").style.display = "none";
+      });
+
       updateCircle();
       document.getElementById("loc").value = `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
     }
@@ -243,7 +282,12 @@
       if (!pin) return;
       const r = +document.getElementById("radius").value * 1609.34;
       if (circle) map.removeLayer(circle);
-      circle = L.circle(pin.getLatLng(), { radius: r, color: "#38bdf8", weight: 2, fillOpacity: 0.05 }).addTo(map);
+      circle = L.circle(pin.getLatLng(), {
+        radius: r,
+        color: "#38bdf8",
+        weight: 2,
+        fillOpacity: 0.05
+      }).addTo(map);
     }
 
     // ===================== HELPERS =====================
@@ -260,10 +304,43 @@
       return R * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1-x));
     }
 
+    // Try multiple Overpass servers
+    async function fetchOverpass(query) {
+      let lastError = null;
+      for (const url of OVERPASS_URLS) {
+        try {
+          const controller = new AbortController();
+          const timeout = setTimeout(() => controller.abort(), 25000);
+
+          const res = await fetch(url, {
+            method: "POST",
+            body: query,
+            signal: controller.signal,
+            headers: { "Content-Type": "application/x-www-form-urlencoded" }
+          });
+          clearTimeout(timeout);
+
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const data = await res.json();
+          return data;
+        } catch (err) {
+          console.warn("Overpass failed on", url, err.message);
+          lastError = err;
+        }
+      }
+      throw lastError || new Error("All Overpass servers failed");
+    }
+
     // ===================== DATA FETCHING =====================
     async function geocode(q) {
       const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q)}&limit=1`;
-      const res = await fetch(url, { headers: { "Accept": "application/json" } });
+      const res = await fetch(url, {
+        headers: {
+          "Accept": "application/json",
+          "User-Agent": "AquaSearcher/1.0 (educational vehicle search tool)"
+        }
+      });
+      if (!res.ok) throw new Error("Geocoding failed");
       const data = await res.json();
       if (!data.length) throw new Error("Location not found");
       return { lat: +data[0].lat, lng: +data[0].lon };
@@ -272,7 +349,7 @@
     async function getWater(lat, lng, radiusMiles) {
       const r = Math.round(radiusMiles * 1609);
       const query = `
-        [out:json][timeout:45];
+        [out:json][timeout:40];
         (
           way(around:${r},${lat},${lng})[natural=water];
           way(around:${r},${lat},${lng})[waterway=riverbank];
@@ -281,8 +358,7 @@
         );
         out geom tags;
       `;
-      const res = await fetch(OVERPASS, { method: "POST", body: query });
-      const data = await res.json();
+      const data = await fetchOverpass(query);
       return (data.elements || []).map(el => {
         let coords = [];
         if (el.geometry) coords = el.geometry.map(g => [g.lat, g.lon]);
@@ -303,7 +379,7 @@
     async function getAccess(lat, lng, radiusMiles) {
       const r = Math.round(radiusMiles * 1609);
       const query = `
-        [out:json][timeout:40];
+        [out:json][timeout:35];
         (
           node(around:${r},${lat},${lng})[amenity=boat_ramp];
           node(around:${r},${lat},${lng})[leisure=slipway];
@@ -314,8 +390,7 @@
         );
         out center tags;
       `;
-      const res = await fetch(OVERPASS, { method: "POST", body: query });
-      const data = await res.json();
+      const data = await fetchOverpass(query);
       return (data.elements || []).map(el => {
         const pt = el.center ? { lat: el.center.lat, lng: el.center.lon } :
                    el.lat ? { lat: el.lat, lng: el.lon } : null;
@@ -347,7 +422,6 @@
                   access * accessWeight +
                   size * sizeWeight;
 
-      // Strong bonus when anomaly exists AT an access point
       if (anomaly >= 40 && access >= 50) {
         score += 15;
         c.label = "NEW OBJECT AT ACCESS";
@@ -375,22 +449,36 @@
         resultLayer.clearLayers();
         document.getElementById("cards").innerHTML = "";
 
-        setStatus("Geocoding location…", 5);
-        let center;
-        const locVal = document.getElementById("loc").value.trim();
-        const coordMatch = locVal.match(/^([-+]?\d+\.?\d*)\s*,\s*([-+]?\d+\.?\d*)$/);
-        if (coordMatch) {
-          center = { lat: +coordMatch[1], lng: +coordMatch[2] };
-        } else {
-          center = await geocode(locVal);
-        }
-        setPin(center.lat, center.lng);
-        map.setView([center.lat, center.lng], 14);
+        setStatus("Getting location…", 5);
 
+        let center;
+        if (pin) {
+          // Prefer the current pin position
+          const p = pin.getLatLng();
+          center = { lat: p.lat, lng: p.lng };
+        } else {
+          const locVal = document.getElementById("loc").value.trim();
+          const coordMatch = locVal.match(/^([-+]?\d+\.?\d*)\s*,\s*([-+]?\d+\.?\d*)$/);
+          if (coordMatch) {
+            center = { lat: +coordMatch[1], lng: +coordMatch[2] };
+          } else {
+            center = await geocode(locVal);
+          }
+          setPin(center.lat, center.lng);
+        }
+
+        map.setView([center.lat, center.lng], 14);
         const radius = +document.getElementById("radius").value;
 
-        setStatus("Finding water bodies…", 15);
-        const waters = await getWater(center.lat, center.lng, radius);
+        setStatus("Finding water bodies…", 20);
+        let waters = [];
+        try {
+          waters = await getWater(center.lat, center.lng, radius);
+        } catch (e) {
+          console.warn("Water fetch failed:", e);
+          setStatus("Water data temporarily unavailable – continuing with access points…", 30);
+        }
+
         waters.forEach(w => {
           if (w.coords && w.coords.length > 2) {
             L.polygon(w.coords, { color: "#38bdf8", weight: 1, fillOpacity: 0.15 }).addTo(waterLayer);
@@ -399,8 +487,16 @@
           }
         });
 
-        setStatus("Finding access points…", 30);
-        const accessPoints = await getAccess(center.lat, center.lng, radius);
+        setStatus("Finding access points (ramps, docks, slipways)…", 45);
+        let accessPoints = [];
+        try {
+          accessPoints = await getAccess(center.lat, center.lng, radius);
+        } catch (e) {
+          console.warn("Access fetch failed:", e);
+          setStatus("Access data failed. Try again in a minute or move the pin.", 0);
+          throw e;
+        }
+
         accessPoints.forEach(a => {
           L.circleMarker([a.lat, a.lng], {
             radius: 7,
@@ -410,10 +506,9 @@
           }).bindPopup(`${a.name} (${a.type})`).addTo(accessLayer);
         });
 
-        setStatus(`Building candidates from ${accessPoints.length} access points…`, 45);
+        setStatus(`Building candidates from ${accessPoints.length} access points…`, 65);
 
-        // Create candidates primarily from access points (anomaly-first philosophy)
-        findings = accessPoints.map((a, i) => {
+        findings = accessPoints.map(a => {
           const nearestWater = waters.reduce((best, w) => {
             const d = distMeters(a, w.center);
             return d < best.d ? { d, w } : best;
@@ -440,8 +535,8 @@
           };
         });
 
-        // Also add a few water centroids as secondary candidates
-        waters.slice(0, 8).forEach((w, i) => {
+        // Add some water centroids as secondary candidates
+        waters.slice(0, 6).forEach(w => {
           findings.push({
             id: "wat-" + w.id,
             name: w.name,
@@ -455,20 +550,19 @@
             sizeScore: 0,
             priority: 0,
             label: "WATER",
-            reason: "Water body centroid (no strong access yet)"
+            reason: "Water body centroid"
           });
         });
 
-        // Initial scoring
         findings.forEach(scoreCandidate);
         findings.sort((a, b) => b.priority - a.priority);
 
         renderResults();
-        setStatus(`Found ${findings.length} candidates. Ready for historical / object scans.`, 70);
-        setStatus("Search complete. Select a candidate and run historical or object scan.", 100);
+        setStatus(`Found ${findings.length} candidates. Select one to inspect.`, 100);
+
       } catch (err) {
         console.error(err);
-        setStatus("Error: " + err.message, 0);
+        setStatus("Error: " + (err.message || "Failed to fetch data. Try again in a moment."), 0);
       } finally {
         document.getElementById("startBtn").disabled = false;
         document.getElementById("pauseBtn").disabled = true;
@@ -502,9 +596,8 @@
         card.onclick = () => selectFinding(card.dataset.id);
       });
 
-      // Draw top results on map
       resultLayer.clearLayers();
-      findings.slice(0, 12).forEach((f, i) => {
+      findings.slice(0, 15).forEach((f, i) => {
         const color = f.priority >= 70 ? "#ef4444" : f.priority >= 45 ? "#f59e0b" : "#64748b";
         L.circleMarker([f.lat, f.lng], {
           radius: 8,
@@ -535,11 +628,10 @@
       map.setView([selected.lat, selected.lng], 16);
     }
 
-    // ===================== PLACEHOLDER SCANS =====================
+    // Placeholder buttons
     document.getElementById("scanHistBtn")?.addEventListener("click", () => {
       if (!selected) return;
-      setStatus("Historical scan would compare Wayback tiles here (to be fully wired)…");
-      alert("Historical imagery comparison will be fully connected in the next pass.\nFor now the architecture is ready.");
+      alert("Historical imagery comparison will be added in the next update.");
     });
 
     document.getElementById("scanObjBtn")?.addEventListener("click", async () => {
@@ -547,10 +639,10 @@
       setStatus("Loading object detection model…");
       try {
         if (!cocoModel) cocoModel = await cocoSsd.load();
-        setStatus("Model loaded. Full tile-based detection coming next.");
-        alert("Object detection model ready.\nNext version will run it on historical tiles around the selected point.");
+        setStatus("Model ready. Full detection coming next.");
+        alert("Object detection model loaded successfully.");
       } catch (e) {
-        setStatus("Could not load detection model: " + e.message);
+        setStatus("Could not load model: " + e.message);
       }
     });
 
